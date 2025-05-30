@@ -10,11 +10,13 @@ entity InstructionDecode is
            regwrite: in std_logic;
            regdst: in std_logic;
            extop: in std_logic;
+           wa: in std_logic_vector(2 downto 0);
            rd1: out std_logic_vector(15 downto 0); --rs
            rd2: out std_logic_vector(15 downto 0); --rt
            ext_imm: out std_logic_vector(15 downto 0);
            func: out std_logic_vector(2 downto 0);
-           sha: out std_logic);
+           sha: out std_logic
+           );
 end InstructionDecode;
 
 architecture Behavioral of InstructionDecode is
@@ -25,7 +27,7 @@ signal reg: reg_array := (others => (others => '0'));
 signal ra1_rs: std_logic_vector(2 downto 0);
 signal ra2_rt: std_logic_vector(2 downto 0);
 signal rd: std_logic_vector(2 downto 0);
-signal wa: std_logic_vector(2 downto 0);
+
 signal imm: std_logic_vector(6 downto 0);
 
 begin
@@ -33,7 +35,7 @@ begin
 ra1_rs <= instruction(12 downto 10);
 ra2_rt <= instruction(9 downto 7);
 rd <= instruction(6 downto 4);
-wa <= ra2_rt when regdst = '0' else rd;
+
 imm <= instruction(6 downto 0);
 
 regfile: process(clk)

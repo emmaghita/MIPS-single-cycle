@@ -49,11 +49,12 @@ component InstructionDecode is port(clk: in std_logic;
                                     regwrite: in std_logic;
                                     regdst: in std_logic;
                                     extop: in std_logic;
+                                    wa: in std_logic_vector(2 downto 0);
                                     rd1: out std_logic_vector(15 downto 0); --rs
                                     rd2: out std_logic_vector(15 downto 0); --rt
                                     ext_imm: out std_logic_vector(15 downto 0);
                                     func: out std_logic_vector(2 downto 0);
-                                    sha: out std_logic);  
+                                    sha: out std_logic); 
 end component InstructionDecode;
 
 component MCU is port(opcode: in std_logic_vector(2 downto 0);
@@ -114,7 +115,15 @@ signal read_data_sig: std_logic_vector(15 downto 0);
 signal val_regwrite, val_memwrite: std_logic;   
 signal led_signal: std_logic_vector(7 downto 0); 
 signal alu_res_sig: std_logic_vector(15 downto 0);        
-signal alu_out_sig: std_logic_vector(15 downto 0);     
+signal alu_out_sig: std_logic_vector(15 downto 0);    
+signal wa_sig: std_logic_vector(2 downto 0);
+
+--signals declared 
+signal IF_ID_reg: std_logic_vector(31 downto 0);
+signal ID_EX_reg: std_logic_vector(75 downto 0);
+signal EX_MEM_reg: std_logic_vector(52 downto 0);
+signal MEM_WB_reg: std_logic_vector(36 downto 0);
+
 begin
 
 op<=instr(15 downto 13);
@@ -126,7 +135,8 @@ jump_addr_sig <= pc_1(15 downto 13) & instr(12 downto 0);
 
 
 IF_datapath_map: InstructionFetch
-                port map(clk=>clk, enable=>en, reset=>rst, branch_addr=>branch_addr_sig,
+                port map(clk=>clk, 
+                enable=>en, reset=>rst, branch_addr=>branch_addr_sig,
                          jump_addr=>jump_addr_sig, jmp_ctr=>jump_sig, pcsrc=>pcsrc_sig, instruction=>instr,
                          next_addr=>pc_1);
                          
@@ -140,30 +150,122 @@ val_regwrite <= en and regwrite_sig;
 
 val_memwrite <= en and memwrite_sig;
 
-write_data_sig <= alu_res_sig when memtoreg_sig='0' else read_data_sig;
+write_data_sig <= MEM_WB_reg(15 downto 0) when MEM_WB_reg(32) = '0' else MEM_WB_reg(31 downto 16);
+
+if_id: process(clk)
+begin
+    if rising_edge(clk) then
+        if en='1' then
+            IF_ID_reg(31 downto 16) <= pc_1;
+            IF_ID_reg(15 downto 0) <= instr;
+        end if;
+    end if;
+end process;
+
+wa_sig <= IF_ID_reg(9 downto 7) when regdst_sig = '0' else IF_ID_reg(6 downto 4);
 
 ID_map: InstructionDecode
-        port map(clk=>clk, instruction=>instr, write_data=>write_data_sig, regwrite=>val_regwrite,
-                 regdst=>regdst_sig, extop=>extop_sig, rd1=>rd1_sig, rd2=>rd2_sig, ext_imm=>ext_imm_sig,
-                 func=>func_sig, sha=>sha_sig);
+    port map(clk => clk,
+             instruction => IF_ID_reg(15 downto 0),
+             write_data => write_data_sig,
+             regwrite => val_regwrite,
+             regdst => regdst_sig,
+             extop => extop_sig,
+             wa => wa_sig,
+             rd1 => rd1_sig,
+             rd2 => rd2_sig,
+             ext_imm => ext_imm_sig,
+             func => func_sig,
+             sha => sha_sig);
 
-EX_map: ExUnit port map(pc_plus1=>pc_1, rd1=>rd1_sig, rd2=>rd2_sig, ext_imm=>ext_imm_sig,
-                        func=>func_sig, alu_src=>alusrc_sig, sha=>sha_sig, alu_op=>aluop_sig,
-                        branch_address=>branch_addr_sig, alu_res=>alu_res_sig, zero=>zero_sig);
+id_ex: process(clk)
+begin
+    if rising_edge(clk) then
+        if en = '1' then
+            ID_EX_reg(75)           <= branch_sig;
+            ID_EX_reg(74)           <= regwrite_sig;
+            ID_EX_reg(73 downto 58) <= IF_ID_reg(31 downto 16);
+            ID_EX_reg(57 downto 42) <= rd1_sig;
+            ID_EX_reg(41 downto 26) <= rd2_sig;
+            ID_EX_reg(25 downto 10) <= ext_imm_sig;
+            ID_EX_reg(9 downto 7)   <= func_sig;
+            ID_EX_reg(6)            <= sha_sig;
+            ID_EX_reg(5 downto 3)   <= aluop_sig;
+            ID_EX_reg(2)            <= alusrc_sig;
+            ID_EX_reg(1)            <= memwrite_sig;
+            ID_EX_reg(0)            <= memtoreg_sig;
+        end if;
+    end if;
+end process;
+
+                                   
+
+EX_map: ExUnit port map(pc_plus1=>ID_EX_reg(73 downto 58), 
+                        rd1=>ID_EX_reg(57 downto 42), 
+                        rd2=>ID_EX_reg(41 downto 26), 
+                        ext_imm=>ID_EX_reg(25 downto 10),
+                        func=>ID_EX_reg(9 downto 7), 
+                        alu_src=>ID_EX_reg(6), 
+                        sha=>ID_EX_reg(2), 
+                        alu_op=>ID_EX_reg(5 downto 3),
+                        branch_address=>branch_addr_sig, 
+                        alu_res=>alu_res_sig, 
+                        zero=>zero_sig);
                         
-mem_map: MEM port map(clk=>clk, alu_res=>alu_res_sig, rd2_wd=>rd2_sig, memwrite=>val_memwrite,
-                      mem_data=>read_data_sig, alu_out=>alu_out_sig);
+ex_mem: process(clk)
+begin
+    if rising_edge(clk) then
+        if en = '1' then
+            EX_MEM_reg(52)           <= ID_EX_reg(75);
+            EX_MEM_reg(51)           <= ID_EX_reg(74);
+            EX_MEM_reg(50)           <= ID_EX_reg(1);
+            EX_MEM_reg(49)           <= ID_EX_reg(0);
+            EX_MEM_reg(48 downto 33) <= branch_addr_sig;
+            EX_MEM_reg(32 downto 17) <= alu_res_sig;
+            EX_MEM_reg(16 downto 1)  <= ID_EX_reg(41 downto 26);
+            EX_MEM_reg(0)            <= zero_sig;
+        end if;
+    end if;
+end process;
+                       
+                        
+mem_map: MEM port map(clk=>clk, 
+                      alu_res=>EX_MEM_reg(32 downto 17), 
+                      rd2_wd=>EX_MEM_reg(16 downto 1), 
+                      memwrite=>val_memwrite,
+                      mem_data=>read_data_sig,
+                      alu_out=>alu_out_sig);
+
+MEMWB: process(clk)
+begin
+    if rising_edge(clk) then
+        if en = '1' then
+            MEM_WB_reg(33)           <= EX_MEM_reg(51);
+            MEM_WB_reg(32)           <= EX_MEM_reg(49); 
+            MEM_WB_reg(31 downto 16) <= read_data_sig;  
+            MEM_WB_reg(15 downto 0)  <= EX_MEM_reg(32 downto 17);
+            MEM_WB_reg(36 downto 34) <= wa_sig;
+        end if;
+    end if;
+end process;
+
+write_data_sig <= MEM_WB_reg(15 downto 0) when MEM_WB_reg(32) = '0' else MEM_WB_reg(31 downto 16);
+
                       
 process(sw)
 begin
     case sw(7 downto 5) is
-        when "000" => digits <= instr;
-        when "001" => digits <= pc_1;
-        when "010" => digits <= rd1_sig;
-        when "011" => digits <= rd2_sig;   
-        when others => digits <= (others=>'0');  
-     end case;                          
-end process;  
+        when "000" => digits <= IF_ID_reg(15 downto 0);  
+        when "001" => digits <= IF_ID_reg(31 downto 16);
+        when "010" => digits <= ID_EX_reg(57 downto 42); -- this is rd1_sig
+        when "011" => digits <= ID_EX_reg(41 downto 26); -- this is rd2_sig
+        when "110" => digits <= EX_MEM_reg(32 downto 17); -- this is alu_res_sig
+        when "111" => digits <= MEM_WB_reg(31 downto 16); -- this is read_data_sig
+
+        when others => digits <= (others => '0');
+    end case;
+end process;
+
 
 ssd_map: SSD port map(clk=>clk, digit0=>digits(3 downto 0), digit1=>digits(7 downto 4),
                       digit2=>digits(11 downto 8), digit3=>digits(15 downto 12), cathode=>cat, anode=>an);
